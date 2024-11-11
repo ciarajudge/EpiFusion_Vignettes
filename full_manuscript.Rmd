@@ -1,0 +1,676 @@
+---
+title: "The EpiFusion Analysis Framework for joint phylodynamic and epidemiological analysis of outbreak characteristics"
+output:
+  word_document:
+    #reference_docx: ../YFV_Brazil_Rt/YFV_WorkInProgress.docx
+    fig_caption: yes
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(ape)
+library(ggplot2)
+library(ggtree)
+library(ggpubr)
+library(EpiFusionUtilities)
+```
+
+```{r lshtm_plotting_theme, echo = F}
+lshtm_theme <- function() {
+  theme(
+    # add border 1)
+    panel.border = element_rect(colour = "#01454f", fill = NA, size = 0.5),
+    # color background 2)
+    panel.background = element_rect(fill = "white"),
+    # modify grid 3)
+    #panel.grid.major.x = element_line(colour = "steelblue", linetype = 3, size = 0.5),
+    panel.grid.minor.x = element_line(colour = "aliceblue"),
+    #panel.grid.major.y =  element_line(colour = "steelblue", linetype = 3, size = 0.5),
+    panel.grid.minor.y = element_line(colour = "aliceblue"),
+    # modify text, axis and colour 4) and 5)
+    axis.text = element_text(colour = "#01454f"),
+    axis.title = element_text(colour = "#01454f"),
+    axis.ticks = element_line(colour = "#01454f"),
+    # legend at the bottom 6)
+    #legend.position = "bottom"
+    strip.text.x = element_text(colour = "white"),
+    strip.text.y = element_text(colour = "white"),
+    strip.background = element_rect(
+      color="#01454f", fill="#01454f", size=1.5, linetype="solid"
+    ),
+    legend.position = "bottom",
+    legend.title = element_text(colour = "#01454f", face = "bold"),
+    legend.text = element_text(colour = "#01454f")
+  )
+}
+
+```
+
+## Abstract
+
+The fields of epidemiology and phylodynamics share the ultimate goal of
+disease control, yet employ distinct approaches. Both use computation
+and mathematics to model disease spread, but concepts, methodologies and
+data employed by each differ in ways that confer complementary strengths
+and different areas of weakness. Thus, there is increasing interest in
+both fields in methods that cohesively combine principles and data from
+both fields into unified models. We recently introduced EpiFusion, a
+model for joint inference of outbreak characteristics using phylogenetic
+and case incidence data via particle filtering, and demonstrated its
+usage to infer the effective reproduction number of simulated and real
+outbreaks. Here we provide a series of vignettes demonstrating data
+analysis using the EpiFusion analysis framework, consisting of the R
+package EpiFusionUtilities and the java program in which the model is
+implemented – EpiFusion.
+
+\newpage
+
+## Introduction
+
+\newpage
+
+## Methods
+
+### Operation
+
+EpiFusion is implemented as a free open source Java software (version 8
+or later) and can be used as a command line tool or from within the
+EpiFusionUtilities R package. The latest stable version of the program
+is available for download under `Releases` on the project Github
+repository. The source code for the latest development version is also
+available at this repository, to facilitate users who wish to clone the
+repository and compile the program from source. Consider carefully which
+directory you place the EpiFusion file in, as every time you wish to use
+it you’ll have to call it with its file path. You can also call
+EpiFusion from any working directory on your system by creating a
+symbolic link *(Appendix 1)*.
+
+EpiFusionUtilities is implemented as an open source R (version 3.5.0 or
+later) package and is available to install from Github using devtools:
+
+```{r install_epifusionutilities_example, eval = F}
+# install from Github
+devtools::install_github("https://github.com/ciarajudge/EpiFusionUtilities")
+```
+
+The recommended EpiFusion workflow includes data processing and
+parameterisation in R using `EpiFusionUtilities` (this may also be done
+manually), followed by running from the `EpiFusionUtilities` function
+`run_epifusion()` or by calling EpiFusion directly from the command
+line, and finally, parsing the results from output files into familiar R
+objects using the `EpiFusionUtilities` functions `load_raw_epifusion()`
+and `extract_posterior_epifusion()`. The key steps of the EpiFusion
+Framework workflow are outlined below in brief in the 'Implementation'
+section.
+
+### Implementation
+
+#### Parameterisation / Data Processing
+
+##### EpiFusion XML
+
+EpiFusion uses input files written in eXtensible Markup Language (XML)
+to provide all data and parameterisation to the program. These files
+contain `Loggers`, `Data`, `Analysis`, `Model`, `Parameters` and
+`Priors` sections where various aspects of the model and analysis may be
+specified *(Table 1)*. A full breakdown of the options available within
+each section is included in the Supplementary Information *(Appendix
+2)*.
+
+| EpiFusion XML Section | Description |
+|-------------------------|----------------------------------------------|
+| Loggers | Provides detail on the program output, including specifying the file path of the output folder that should be created, and the frequency at which the program logs the state of the MCMC to the output files (and prints to the console) |
+| Data | Provides the case incidence data and/or a phylogenetic tree (either within the XML document or by providing file paths to files containing the data) |
+| Analysis | Parameterises the method for fitting beta, the force of infection |
+| Model | Allows further customisation of the EpiFusion model structure - currently only specification of the epidemiological observation model is available |
+| Parameters | Contains many assorted parameters for the model, for example number of MCMC steps per chain, number of MCMC chains, number of particles in the particle filter etc. |
+| Priors | Prior specification for parameters to be fit via particle MCMC |
+
+: Table 1 Main sections of EpiFusion XML parameter file structure
+
+##### Assembling parameter XML files
+
+EpiFusion XML files may either be populated manually using the many
+templates available at the `EpiFusion` Github repository, or created
+using a number of useful functions in the `EpiFusionUtilities` package.
+
+The first step of processing data for EpiFusion input is to select an
+'index date'. The index date is the earliest possible date of origin of
+the outbreak (i.e. day 0), and is provided to the processing functions
+to enable the case and incidence data to be rooted in numerical time
+units. All times in EpiFusion input and output will be in relation to
+this date and measured in days.
+
+```{r set_index_date_example, eval = F}
+index_date <- as.Date("2024-01-01")
+```
+
+If the date of outbreak origin is not being inferred
+(`inferTimeOfIntroduction` is `false` in the `analysis` block of the
+XML), all trajectory samples will assume that the outbreak originated
+with one infected individual on the index date. If the date of outbreak
+origin is being inferred, the model will fit the date at which the first
+individual is infected, thus trajectory samples may begin with 0
+infected until the date of origin which the MCMC process has sampled.
+
+To prepare a tree or tree posterior for EpiFusion, pass an S3 phylo or
+multiPhylo object in R to the `prepare_epifusion_tree()` function. This
+function processes a phylogenetic tree (or trees) and writes to a file,
+which you can specify in the arguments of the function (the default is
+'./processedtree.tree'). It is also necessary to pass the date of the
+last sample in the tree(s).
+
+```{r processing_tree_example, eval = F}
+prepare_epifusion_tree(tree,
+                       index_date,
+                       last_sequence,
+                       "Data/Processed/processed_fixed_tree.tree")
+```
+
+To generate an EpiFusion XML file from within an R session, the
+`generate_epifusion_XML()` function may be used. This function populates
+a `template xml file` with the provided data, and has default settings
+for most parameters and priors which can also be changed by providing
+new values in the arguments of the function. For example below, we pass
+a case incidence data frame and tree to the function, specify that we
+will sample from the MCMC chain every 100 steps, set our output folder
+path to 'output_files', and adjust the number of particles in the
+particle filter to 300. This creates a file in our working directory
+'epifusion_input.xml' which should be ready to pass to EpiFusion.
+
+```{r generate_xml_example, eval = F}
+logger_information <- list(fileBase = "output_files", logEvery = 100)
+parameters_to_adjust <- list(numParticles = 300)
+
+generate_epifusion_XML(tree = "Data/Processed/processed_fixed_tree.tree",
+                       case_incidence = case_incidence,
+                       index_date = index_date,
+                       loggers = loggers,
+                       parameters = parameters,
+                       xml_filepath = "epifusion_input.xml")
+
+```
+
+#### Running EpiFusion
+
+EpiFusion can be run directly from the command line by calling an
+executable Java Archive (JAR) file using the following syntax. Here
+`EpiFusion.jar` is the file path to the executable file (in this
+example, the file is present in the working directory) and
+`epifusion_input.xml` is the file path to the parameter XML file (also
+present in the working directory for this example):
+
+``` sh
+java -jar EpiFusion.jar epifusion_input.xml
+```
+
+Alternatively, it is possible to run EpiFusion from inside an R session
+with the EpiFusionUtilities function
+[`run_epifusion()`](https://github.com/ciarajudge/EpiFusionUtilities/wiki/run_epifusion()).
+(an installation of Java is still required, but this option may be
+slightly more intuitive for some users).
+
+```{r run_epifusion_example, eval = F}
+run_epifusion("epifusion_input.xml")
+```
+
+#### Interpreting Output
+
+EpiFusion creates a directory within the working directory that
+corresponds to the file path of the 'fileBase' parameter in your
+EpiFusion xml file. For each MCMC chain, EpiFusion will create the
+following output files:
+
+-   betas: csv file where each row is a trajectory of rate beta sampled
+    from the MCMC
+
+-   trajectories: csv file where each row is a daily infection
+    trajectory sampled from the MCMC
+
+-   params: txt file where each column is an MCMC parameter, and each
+    row is an MCMC sample
+
+-   likelihoods: txt file of the posterior likelihoods from each MCMC
+    step
+
+-   acceptance: txt file where each line logs the acceptance rate of
+    steps between MCMC samples
+
+-   completed: txt file where each line logs if the particle filter step
+    was completed or quit due to particle depletion
+
+-   cuminfections: txt file where each row is a trajectory of cumulative
+    infections per day sampled from the MCMC
+
+-   positivetests: (only for combined or epi-only analyses): csv file
+    where each row is simulated case incidence by the model which was
+    compared to the observed case incidence
+
+EpiFusion will also save a copy of the parameter file used to the output
+folder, so you can remember exactly what parameters were used, and a
+file called 'timings.txt' with the runtime in nanoseconds.
+
+It is possible to process this raw output manually, but
+`EpiFusionUtilities` provides a number of helpful functions to do this
+neatly from within R. The following functions load the raw output into
+an R object, plot the likelihood trace for each MCMC chain to enable
+inspection to decide what proportion of samples from each chain to
+discard as burn-in, and finally extract the posterior samples from each
+chain and combine them into a single posterior while assessing
+convergence.
+
+```{r parse_output_example, eval = F}
+raw_output <- load_raw_epifusion("output_files/")
+plot_likelihood_trace(raw_output)
+full_posterior <- extract_posterior_epifusion(raw_output, 0.1)
+```
+
+\newpage
+
+## Use Case - Full EpiFusion Framework Workflow
+
+### Description of the simulated dataset
+
+Below we demonstrate the implementation of `EpiFusion` and
+`EpiFusionUtilities` to analyse data from a small simulated outbreak. An
+outbreak trajectory, and resulting weekly case incidence and a
+phylogenetic tree of simulated sequences were generated using ReMaster,
+and genomic sequences were simulated in R from the phylogenetic tree
+using the function `simSeq()` from the R package `phangorn`. These
+sequences were used to generate a tree posterior using `BEAST 2.7.3`
+with a Birth Death Skyline model, under a strict clock and JC69
+substitution model. Further information on the BEAST specification is
+included in the Supplementary Information *(Appendix 4)*. The date of
+origin of the outbreak was arbitrarily chosen as January 1st 2024. The
+final resulting data inputs for analysis in EpiFusion consisted of a
+file with a fixed time-scaled phylogenetic tree, a tree posterior file
+generated from sequences simulated from the outbreak, and a csv file
+with dated counts of weekly incidence. These raw data files are provided
+in the article repository 'xxx (need to upload to github)', where the
+code below is provided to fully replicate this use case example.
+
+```{r plot_data, echo = F, fig.cap = "Data from a simulated outbreak using ReMaster and BEAST 2.7.3"}
+case_incidence <- read.csv("Data/Raw/weekly_incidence.csv") %>%
+  mutate(Date = as.Date(Date))
+fixed_tree <- read.tree("Data/Raw/fixed_tree.tree")
+tree_posterior <- sample(read.nexus("Data/Raw/tree_posterior.trees")[2000:10000], 200) # Discard burn in, randomly sample 200
+
+tree_plotlims <- lubridate::decimal_date(as.Date(c("2023-12-24","2024-04-15"), format = "%Y-%m-%d"))
+
+fixed_tree_plot <- ggtree(fixed_tree, mrsd = "2024-03-10", color = "darkslateblue") +
+  xlim_tree(tree_plotlims) +
+  geom_tippoint(col = "darkslateblue") +
+  lshtm_theme()
+
+posterior_tree_plot <- ggdensitree(tree_posterior, color = "darkslateblue", alpha = 0.02) +
+  xlim(-0.2149453, 0.104) +
+  geom_tippoint(col = "darkslateblue") +
+  lshtm_theme()
+
+case_incidence_plot <- ggplot(case_incidence, aes(x = Date, y = Cases)) +
+  geom_point(col = "orangered3") +
+  coord_cartesian(xlim = as.Date(c("2023-12-24", "2024-04-15")))
+
+ggarrange(fixed_tree_plot, posterior_tree_plot, case_incidence_plot, ncol = 1, align = "v")
+```
+
+### Data Preparation
+
+First we load and inspect the data. We will run two EpiFusion analyses
+in this example - one with the fixed phylogenetic tree, and one where we
+account for phylogenetic uncertainty by using the tree posterior as the
+data for EpiFusion. The case incidence can be read into the program as a
+csv file from `Data/Raw/weekly_incidence.csv`, and the Date column
+coerced to Date format using the `mutate` and `as.Date` functions. The
+fixed tree is in the `Data/Raw/fixed_tree.tree` file in newick string
+format, so we read it using the `read.tree` function of the `ape`
+package. The tree posterior generated by BEAST is in the
+`Data/Raw/tree_posterior.trees` and is in nexus format, so can be loaded
+using the `read.nexus` function of the `ape` package.
+
+```{r load_data}
+case_incidence <- read.csv("Data/Raw/weekly_incidence.csv") %>%
+  mutate(Date = as.Date(Date))
+fixed_tree <- read.tree("Data/Raw/fixed_tree.tree")
+tree_posterior <- sample(read.nexus("Data/Raw/tree_posterior.trees")[2000:10000], 200) # Discard burn in, randomly sample 200
+
+print(case_incidence[1:5,])
+
+print(fixed_tree)
+
+print(tree_posterior)
+```
+
+Next we set two date objects: the 'index date', or the earliest date
+from which we will model the outbreak origin (this is most relevant for
+the second of the two analyses we run here, where we also infer the time
+of introduction or outbreak origin), and the date sampling of the last
+observed sequence from the dataset. While we know through the simulation
+process that the outbreak origin was the 1st of January 2024, it is good
+practice to set the index date to some time before when we suspect the
+outbreak originated, to allow the program freedom to infer the outbreak
+origin through a range of possible values.
+
+```{r set_index_date}
+index_date <- as.Date("2023-12-15")
+last_sequence <- as.Date("2024-03-10")
+```
+
+To prepare the tree objects for EpiFusion we can use the
+`prepare_epifusion_tree` function from `EpiFusionUtilities`. This
+function processes the tree(s) for input to EpiFusion and writes them to
+the provided file path. In the case where a single fixed tree (our first
+example) is provided to this function it also returns the processed tree
+as an R phylo object, which here we reassign to the variable
+`fixed_tree`.
+
+```{r prep_data, eval = F}
+fixed_tree <- prepare_epifusion_tree(fixed_tree, index_date, last_sequence, "Data/Processed/processed_fixed_tree.tree")
+prepare_epifusion_tree(tree_posterior, index_date, last_sequence, "Data/Processed/processed_tree_posterior.tree")
+```
+
+### Definition of parameters
+
+We will create an EpiFusion XML file using the `generate_epifusion_xml`
+function from `EpiFusionUtilities`. This function populates the below
+XML template with our data and creates a new file, and other arguments
+to this function can adjust parameters from their default value.
+
+```         
+<?xml version="1.0" encoding="UTF-8"?>
+<EpiFusionInputs>
+  <loggers>
+    <fileBase>FILESTEM</fileBase>
+    <logEvery>10</logEvery>
+  </loggers>
+  <data>
+    <incidence>
+      <incidenceVals>INCIDENCE</incidenceVals>
+      <incidenceTimes type="exact">INCIDENCETIMES</incidenceTimes>
+    </incidence>
+    <tree>
+      <treePosterior></treePosterior>
+    </tree>
+    <epicontrib>0.5</epicontrib>
+    <changetimes>0</changetimes>
+  </data>
+  <analysis>
+    <type>looseformbeta</type>
+    <startTime>null</startTime>
+    <endTime>null</endTime>
+    <inferTimeOfIntroduction>false</inferTimeOfIntroduction>
+  </analysis>
+  <model>
+    <epiObservationModel>poisson</epiObservationModel>
+  </model>
+  <parameters>
+    <epiOnly>false</epiOnly>
+    <phyloOnly>false</phyloOnly>
+    <numParticles>200</numParticles>
+    <numSteps>2000</numSteps>
+    <numThreads>8</numThreads>
+    <numChains>4</numChains>
+    <stepCoefficient>0.05</stepCoefficient>
+    <resampleEvery>7</resampleEvery>
+    <segmentedDays>true</segmentedDays>
+    <samplingsAsRemovals>1</samplingsAsRemovals>
+    <pairedPsi>false</pairedPsi>
+  </parameters>
+  <priors>
+    <gamma>
+      <stepchange>false</stepchange>
+      <disttype>TruncatedNormal</disttype>
+      <mean>0.143</mean>
+      <standarddev>0.05</standarddev>
+      <lowerbound>0.0</lowerbound>
+    </gamma>
+    <psi>
+      <stepchange>false</stepchange>
+      <disttype>TruncatedNormal</disttype>
+      <mean>0.001</mean>
+      <standarddev>0.0005</standarddev>
+      <lowerbound>0.0</lowerbound>
+    </psi>
+    <phi>
+      <stepchange>false</stepchange>
+      <disttype>TruncatedNormal</disttype>
+      <mean>0.02</mean>
+      <standarddev>0.01</standarddev>
+      <lowerbound>0.0</lowerbound>
+    </phi>
+    <initialBeta>
+      <stepchange>false</stepchange>
+      <disttype>Uniform</disttype>
+      <min>0.3</min>
+      <max>0.8</max>
+    </initialBeta>
+    <betaJitter>
+      <stepchange>false</stepchange>
+      <disttype>Uniform</disttype>
+      <min>0.001</min>
+      <max>0.05</max>
+    </betaJitter>
+  </priors>
+</EpiFusionInputs>
+```
+
+First we will generate an EpiFusion XML using the fixed tree we prepared
+with the `prepare_epifusion_tree` function. First we will make lists of
+the various parts of the XML file we wish to override from the default.
+For example, the below code represents the `loggers` chunk in the
+default XML:
+
+```         
+  <loggers>
+    <fileBase>FILESTEM</fileBase>
+    <logEvery>10</logEvery>
+  </loggers>
+```
+
+We will make a list in R that we will later pass to the `loggers`
+argument of the `generate_epifusion_xml` function to specify our output
+folder filepath as `Results/fixed_tree` and sample from the MCMC chain
+every 5 steps:
+
+```{r assign_loggers, eval = F}
+loggers <- list(fileBase = "Results/fixed_tree", logEvery = 5)
+```
+
+In this example we are happy with the other parameters and priors in the
+default XML, so we can generate the XML file
+`Data/EpiFusion_XMLs/fixed_tree_inputfile.xml` with the following code:
+
+```{r generate_epifusion_xml_fixed_tree, eval = F}
+generate_epifusion_XML(tree = "Data/Processed/processed_fixed_tree.tree",
+                       case_incidence = case_incidence,
+                       index_date = index_date,
+                       loggers = loggers,
+                       xml_filepath = "Data/EpiFusion_XMLs/fixed_tree_inputfile.xml")
+```
+
+Next we will generate the XML file for the analysis using the tree
+posterior. We again specify adjustments to the loggers chunk, and make
+some other changes. We adjust the method for fitting beta over time from
+a random walk to linear splines between resampling points, and switch on
+the inference of 'Time of Introduction' or 'Outbreak Origin' in the
+`analysis` block.
+
+```{r new_loggers_and_analysis, eval = F}
+loggers <- list(fileBase = "Results/tree_posterior_and_TOI", logEvery = 5)
+analysis <- list(type = "linearsplinebeta", inferTimeOfIntroduction = "true")
+```
+
+Because we are introducing inference of the outbreak origin, it is
+necessary to set a prior for the value in terms of days from the
+`index_date`. The prior should take advantage of one of the discrete
+distributions available for prior parameterisation in EpiFusion. For the
+prior block only, it is not necessary to make targeted adjustments; i.e.
+any adjustments to the prior block result in it becoming necessary to
+respecify all priors.
+
+```{r specify_priors, eval = F}
+priors <- list(gamma = list(stepchange = "false",
+                            disttype = "TruncatedNormal",
+                            mean = 0.15,
+                            standarddev = 0.03, 
+                            lowerbound = 0.0),
+               psi = list(stepchange = "false",
+                            disttype = "TruncatedNormal",
+                            mean = 0.001,
+                            standarddev = 0.0004, 
+                            lowerbound = 0.0),
+               phi = list(stepchange = "false",
+                            disttype = "TruncatedNormal",
+                            mean = 0.02,
+                            standarddev = 0.01, 
+                            lowerbound = 0.0),
+               initialBeta = list(stepchange = "false",
+                            disttype = "Uniform",
+                            min = 0.3,
+                            max = 0.8),
+               betaJitter = list(stepchange = "false",
+                            disttype = "Uniform",
+                            min = 0.001,
+                            max = 0.1, 
+                            lowerbound = 0.0),
+               outbreakOrigin = list(stepchange = "false",
+                            disttype = "UniformDiscrete",
+                            min = 0,
+                            max = 30, 
+                            lowerbound = 0.0))
+```
+
+Now we can generate an XML file for our tree posterior analysis by
+passing our data, parameter lists, and destination filepath to
+`generate_epifusion_xml`:
+
+```{r generate_xml_tree_posterior, eval = F}
+generate_epifusion_XML(tree = "Data/Processed/processed_tree_posterior.tree",
+                       case_incidence = case_incidence,
+                       index_date = index_date,
+                       loggers = loggers,
+                       analysis = analysis,
+                       priors = priors,
+                       xml_filepath = "Data/EpiFusion_XMLs/tree_posterior_inputfile.xml")
+```
+
+### Running EpiFusion
+To run EpiFusion for the fixed tree example, we will use the `run_epifusion` function from `EpiFusionUtilities` to run the program within our R session:
+
+```{r run_epifusion, eval = F}
+run_epifusion("Data/EpiFusion_XMLs/fixed_tree_inputfile.xml")
+```
+
+Alternatively, it is possible to run the program via the command line in a shell terminal with the following code, which we will demonstrate for the tree posterior example:
+
+```
+java -jar EpiFusion.jar "Data/EpiFusion_XMLs/tree_posterior_inputfile.xml"
+```
+This code assumes there is an EpiFusion jar file in the working directory (which is provided in the Github repository with the rest of the raw data and code used in this Use Case).
+
+### Parsing the output
+We will primarily use the fixed tree example to demonstrate the process of parsing through EpiFusion output, however it the same commands can be used for parsing any EpiFusion output, including the tree posterior example. Later we will parse the tree posterior example to examine the inferred time of introduction and the effect of using the tree posterior on the results.
+
+First we will use the `load_raw_epifusion` and `plot_likelihood_trace` functions to import the full raw results and examine the likelihood trace. This allows us to check for convergence and help to identify what proportion of each chain to discard as burn-in.
+
+```{r parse_output_examine_trace, fig.height = 3, fig.cap = "Likelihood trace of the MCMC chains run in an EpiFusion model"}
+raw_output_fixed <- load_raw_epifusion("Results/fixed_tree/")
+plot_likelihood_trace(raw_output_fixed)
+
+```
+
+Next we can discard the burn-in from each MCMC chain and combine all chains into a combined posterior using the `extract_posterior_epifusion` function which takes a raw EpiFusion object and the proportion of each chain to discard as burn-in as its arguments.
+
+```{r extract_posteriors}
+parsed_output_fixed <- extract_posterior_epifusion(raw_output_fixed, 0.1)
+str(parsed_output_fixed, max.level = 2)
+```
+
+### Plotting and examining the output
+
+The extracted posterior object from the `extract_posterior_epifusion` function contains mean and HPD intervals of increasing width for infection, Rt, cumulative infection and fitted epidemiological case trajectories. The `trajectory_table` function can parse these into a convenient table structured to be suitable for plotting with `ggplot2`.
+
+```{r get_trajectories_table}
+traj_table <- trajectory_table(parsed_output_fixed, index_date)
+head(traj_table, n = 3)
+```
+
+We will use this table with ggplot functions to plot and inspect the inferred infection trajectories:
+
+```{r plot_infection_trajectories, fig.height = 4, fig.cap = "Inferred infection trajectories using a combined EpiFusion model and a fixed tree, plotted with ggplot2"}
+ggplot(traj_table, aes(x = Time)) +
+  geom_line(aes(y = Mean_Infected), col = "#2aac6d") +
+  geom_ribbon(aes(ymin = Lower95_Infected, ymax = Upper95_Infected), fill = "#2aac6d", alpha = 0.2) +
+  geom_ribbon(aes(ymin = Lower88_Infected, ymax = Upper88_Infected), fill = "#2aac6d",  alpha = 0.2) +
+  geom_ribbon(aes(ymin = Lower66_Infected, ymax = Upper66_Infected), fill = "#2aac6d", alpha = 0.2) +
+  lshtm_theme()
+```
+
+We can use very similar code to plot the inferred R(t) trajectories:
+
+```{r plot_Rt_trajectories, fig.height = 4, fig.cap = "Inferred R(t) trajectories using a combined EpiFusion model and a fixed tree, plotted with ggplot2"}
+ggplot(traj_table, aes(x = Time)) +
+  geom_hline(yintercept = 1, linetype = 2, col = "#01454f") +
+  geom_line(aes(y = Mean_Rt), col = "#00abce") +
+  geom_ribbon(aes(ymin = Lower95_Rt, ymax = Upper95_Rt), fill = "#00abce", alpha = 0.2) +
+  geom_ribbon(aes(ymin = Lower88_Rt, ymax = Upper88_Rt), fill = "#00abce",  alpha = 0.2) +
+  geom_ribbon(aes(ymin = Lower66_Rt, ymax = Upper66_Rt), fill = "#00abce", alpha = 0.2) +
+  lshtm_theme()
+```
+
+Here we can see that the inferred R(t) from our index date of 15th December 2023 to the date of the true outbreak origin (January 1st 2024) is characterised by uncertainty in the R(t) estimates, which is to be expected. Finally we will plot the cumulative infections:
+
+```{r plot_cuminfection_trajectories, fig.height = 4, fig.cap = "Inferred cumulative infection trajectories using a combined EpiFusion model and a fixed tree, plotted with ggplot2"}
+ggplot(traj_table, aes(x = Time)) +
+  geom_line(aes(y = Mean_CumulativeInfections), col = "#fbb800") +
+  geom_ribbon(aes(ymin = Lower95_CumulativeInfections, ymax = Upper95_CumulativeInfections), fill = "#fbb800", alpha = 0.2) +
+  geom_ribbon(aes(ymin = Lower88_CumulativeInfections, ymax = Upper88_CumulativeInfections), fill = "#fbb800",  alpha = 0.2) +
+  geom_ribbon(aes(ymin = Lower66_CumulativeInfections, ymax = Upper66_CumulativeInfections), fill = "#fbb800", alpha = 0.2) +
+  lshtm_theme()
+```
+
+As this has been a combined analysis that has used case incidence data, it is possible to examine the fit of the case incidence simulated within the model to the provided data. We already have the case incidence data loaded from the data preparation stage, so we can add the mean and HPD intervals of the fit to the existing table.
+
+```{r plot_epi_data_fit, fig.height = 4, fig.cap = "Fit of observed epidemiological cases to simulated cases by the EpiFusion model, plotted with ggplot2"}
+epi_data_table <- case_incidence %>%
+  mutate(Mean_Case_Fit = parsed_output_fixed$fitted_epi_cases$mean_fitted_epi_cases,
+         Lower95_Cases = parsed_output_fixed$fitted_epi_cases$fitted_epi_cases_hpdintervals$HPD0.95$Lower,
+         Upper95_Cases = parsed_output_fixed$fitted_epi_cases$fitted_epi_cases_hpdintervals$HPD0.95$Upper,
+         Lower88_Cases = parsed_output_fixed$fitted_epi_cases$fitted_epi_cases_hpdintervals$HPD0.88$Lower,
+         Upper88_Cases = parsed_output_fixed$fitted_epi_cases$fitted_epi_cases_hpdintervals$HPD0.88$Upper,
+         Lower66_Cases = parsed_output_fixed$fitted_epi_cases$fitted_epi_cases_hpdintervals$HPD0.66$Lower,
+         Upper66_Cases = parsed_output_fixed$fitted_epi_cases$fitted_epi_cases_hpdintervals$HPD0.66$Upper)
+
+
+ggplot(epi_data_table, aes(x = Date)) +
+  geom_line(aes(y = Mean_Case_Fit), col = "#e95b0d") +
+  geom_ribbon(aes(ymin = Lower95_Cases, ymax = Upper95_Cases), fill = "#e95b0d", alpha = 0.2) +
+  geom_ribbon(aes(ymin = Lower88_Cases, ymax = Upper88_Cases), fill = "#e95b0d",alpha = 0.2) +
+  geom_ribbon(aes(ymin = Lower66_Cases, ymax = Upper66_Cases), fill = "#e95b0d", alpha = 0.2) +
+  geom_point(aes(y = Cases), col = "#01454f") +
+  lshtm_theme()
+```
+
+Finally we can examine the posteriors of the MCMC parameters. The posterior extraction process uses the R package `stable.GR` to perform gelman-rubin convergence tests on each parameter, and estimate the effective sample sizes of each:
+
+```{r examine_gamma_convergence}
+print(parsed_output_fixed$parameters$gamma$rhat)
+print(parsed_output_fixed$parameters$gamma$ess)
+```
+
+We can also view the posterior density by plotting the samples of a parameter from the MCMC:
+
+```{r plot_gamma, fig.cap = "Posterior density of the gamma recovery/removal parameter, plotted using ggplot2"}
+ggplot(data = data.frame(Gamma = parsed_output_fixed$parameters$gamma$samples), aes(x = Gamma)) +
+  geom_density(fill = "#01454f", alpha = 0.3)
+
+```
+
+\newpage
+
+## Conclusions
