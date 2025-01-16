@@ -3,7 +3,8 @@
 .RData
 .Ruserdata
 
-Results/*
+Results/b*
+Results/s*
 Literature/*
 Figs/*
 
