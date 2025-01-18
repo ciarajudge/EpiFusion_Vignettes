@@ -31,7 +31,7 @@
     <epiOnly>false</epiOnly>
     <phyloOnly>false</phyloOnly>
     <numParticles>200</numParticles>
-    <numSteps>5000</numSteps>
+    <numSteps>10000</numSteps>
     <numThreads>8</numThreads>
     <numChains>4</numChains>
     <stepCoefficient>0.05</stepCoefficient>

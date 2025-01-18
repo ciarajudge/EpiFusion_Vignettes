@@ -2,7 +2,7 @@
 <EpiFusionInputs>
   <loggers>
     <fileBase>Results/baseline_fixed_tree</fileBase>
-    <logEvery>5</logEvery>
+    <logEvery>10</logEvery>
   </loggers>
   <data>
     <indexdate>2023-12-26</indexdate>
@@ -30,11 +30,11 @@
   <parameters>
     <epiOnly>false</epiOnly>
     <phyloOnly>false</phyloOnly>
-    <numParticles>200</numParticles>
-    <numSteps>4000</numSteps>
+    <numParticles>100</numParticles>
+    <numSteps>10000</numSteps>
     <numThreads>8</numThreads>
     <numChains>4</numChains>
-    <stepCoefficient>0.05</stepCoefficient>
+    <stepCoefficient>0.1</stepCoefficient>
     <resampleEvery>7</resampleEvery>
     <segmentedDays>true</segmentedDays>
     <samplingsAsRemovals>1</samplingsAsRemovals>

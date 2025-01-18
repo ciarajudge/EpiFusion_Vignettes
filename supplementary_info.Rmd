@@ -80,6 +80,8 @@ Now you should be able to call EpiFusion from anywhere in your system.
 
 ## Appendix 2 - Full EpiFusion XML Breakdown
 
+Below we provide information on the input files for EpiFusion (XML files). For some key parameters and priors, we provide advice on setting reasonable parameter values or priors.
+
 ### Loggers
 The loggers section dictates the program output,
 
@@ -91,7 +93,7 @@ but avoid the usual folder naming trouble makers (spaces, slashes, etc).
 
 #### `logEvery`
 This sets the frequency at which the program logs the state of the MCMC
-to the output files (and prints to console).
+to the output files (and prints to console). If you are concerned about autocorrelation (MCMC samples close by in the chain having very similar values, indicating a poorly explored posterior), we recommend increasing this parameter until you are satisfied with the mixing of your chains. You may have to run your chains for a longer number of steps in this instance to ensure you still get a satisfactory Effective Sample Size of samples from the posterior.
 
 ### Data
 The data section is for providing case incidence data, a phylogenetic
@@ -269,27 +271,27 @@ Set it to true if you want to run a tree only analysis. If it, and
 Does what it says on the tin: numParticles sets the number of particles
 for the particle filter. 100-200 particles usually works fine, if you
 are expecting unpredictable movements it's usually helpful to aim
-towards the higher end.
+towards the higher end. For very long time series' or analyses with many 'twists' and 'turns' in infection dynamics, it is recommended to increase this number, but this will lead to a decrease in efficiency. If your acceptance rate is very low, increasing the number of particles may also help.
 
 #### `numSteps`
 Number of steps of the MCMC. The particle filter does a lot of heavy
-lifting fitting wise, so 2000-5000 steps often does the trick.
+lifting fitting wise, so 2000-5000 steps often does the trick. However for complex analyses, or analyses with low acceptance rates, it may be advisable to run for longer. It is important to check your results to ensure you have enough steps in each chain for them to converge on the posterior (you can verify this visually using trace plots or by checking the gelman-rubin statistics of the parameters), and yield satisfactorily high Effective Sample Sizes of the MCMC parameters.
 
 #### `numThreads`
-Number of threads to use during the parallelised particle filter steps.
+Number of threads to use during the parallelised particle filter steps. More threads will lead to a faster runtime - but try not to assign more threads than are available on your machine.
 
 #### `numChains`
-Number of MCMC chains to run. Standard practice is around 4.
+Number of MCMC chains to run. Standard practice is around 4. Sometimes chains get stuck and their MCMC step acceptance rate drops to zero. If you are worried about this, you can increase the number of chains you run to allow you to discard non-convergent or stuck chains. If your chains are commonly getting stuck or not converging, you should closely examine your data and analysis to ensure there are not any bigger problems at play.
 
 #### `stepCoefficient`
-Coefficient of the MCMC step sizes for generating new proposals.
+Coefficient of the MCMC step sizes for generating new parameter proposals.
 Currently the MCMC sampler is basic Metropolis Hastings so you might
-have to mess around with this step-size to find what works best.
+have to mess around with this step-size to find what works best. Anecdotally, we have found between 0.01 and 0.1 to be successful at converging on the posterior while not being too large so that every step is rejected.
 
 #### `resampleEvery`
 This sets the number of days between each particle resampling. 7 days
 has worked nicely for us so far, and gels nicely with weekly case
-incidence counts.
+incidence counts. Increasing this value (i.e. making the intervals larger) helps with efficiency, but increases the risk of particle depletion and decreases the resolution of the inferred dynamics if you are using a linear splines approach to fitting beta.
 
 #### `segmentedDays`
 This makes a minor change to the phylogenetic likelihood implementation.
@@ -313,8 +315,7 @@ For analyses where the sampling rate needs to be carefully parameterised and per
 ### Priors
 The priors block is where you provide priors and other parameterisations
 for the rates of the particle filter process model. You can provide a
-number of different priors, but you definitely must include a `gamma`,
-`psi` and `phi`. All priors need two things: whether or not the rate has
+number of different priors, but you definitely must include a `gamma`, `phi` and `psi` (unless you're using the `pairedPsi` feature). All priors need two things: whether or not the rate has
 a step-change (`stepchange`), and then details on how the rate is
 distributed (`disttype` and associated info). For example, here is a
 gamma parameterisation where the rate stays constant over time (no
@@ -328,14 +329,19 @@ standard deviation 0.03 and lower bound of 0.0.
           <standarddev>0.03</standarddev>
           <lowerbound>0.0</lowerbound>
           <stepchange>false</stepchange>
-      </gamma>  
+      </gamma>
 ```
 
 #### Distribution Options
 There are a number of different distribution options available with more
-being added all the time. Here is what's currently available: 1. Normal
-2. Truncated Normal 3. Poisson 4. Uniform 5. Uniform Discrete 6. Fixed
-Parameter (this is if you want to fix a parameter, i.e. not infer it)
+being added all the time. Here is what's currently available:
+1. Normal
+2. Truncated Normal
+3. Poisson
+4. Uniform
+5. Uniform Discrete
+6. Beta
+7. FixedParameter (this is if you want to fix a parameter, i.e. not infer it)
 
 And here's an example of how each of them could be parameterised:
 
@@ -374,6 +380,13 @@ And here's an example of how each of them could be parameterised:
           <max>600</max>
           <stepchange>false</stepchange>
       </exampleparam>
+      
+      <exampleparam>
+          <disttype>Beta</disttype>
+          <alpha>7</alpha>
+          <beta>1000</beta>
+          <stepchange>false</stepchange>
+      </exampleparam>
 
       <exampleparam>
           <disttype>FixedParameter</disttype>
@@ -381,6 +394,31 @@ And here's an example of how each of them could be parameterised:
           <stepchange>false</stepchange>
       </exampleparam>
 ```
+
+#### Setting reasonable priors
+
+When setting priors for EpiFusion we recommend using some trial and error until you find the values which make sense for your analysis. It is also sometimes useful to visually inspect the distributions you are specifying by plotting the values obtained from functions such as `rnorm`, `rtruncnorm`, `rbeta` etc. in an R session, and ensure that the 'parameter' values along the x-axis with the highest values along the y-axis correspond to your prior beliefs about the parameter value.
+
+For example, here we inspect the shape of a proposed prior for `gamma` for a disease with an approximately 10 day infectious period:
+
+```{r test_gamma, echo = T}
+test_distribution_samples <- rtruncnorm(1000, a = 0, mean = 0.1, sd = 0.02)
+
+plot(density(test_distribution_samples))
+
+```
+
+Most priors set in EpiFusion are for rates, meaning they should be exclusively positive and parameterised with distributions such as TruncatedNormal (with a lowerbound of 0.0) or Beta. For distributions that require a mean, this value should be close to your suspected value of the parameter according to your existing knowledge. The width of the distribution should reflect your certainty about the value of the parameter - this is often governed by the standard deviation parameter, or the minimum and maximum parameters for uniform distributions. If you have very little knowledge or confidence in the value of the parameter, uniform distributions may work best, as they are 'uninformative'; i.e. they do not place any restrictions on the values of the parameter, except perhaps their minimum and maximum values.
+
+##### Gamma
+This is the rate of recovery or removal of an infectious individual. For example, if the disease under study has an infectious period of 10 days, then a reasonable mean value for your \gamma prior distribution will be 1/10, or 0.1.
+
+##### Beta
+While \beta itself is typically fit within the particle filter, many of these fitting methods allow you to infer the starting point via MCMC. The \beta parameter is the infectivity of an infectious individual, and is used with \gamma to infer $R_t$ from the model using the equation $R_t = \beta / \gamma$. For example, if you expect $R_t$ to be approximately 3.0 at the beginning of the time series, and you have parameterised \gamma with a mean of 0.1 as per our example above, then you might parameterise \beta with a mean of $3.0*0.1 = 0.3$.
+
+##### Phi and psi
+\phi and \psi represent the case and genomic sequence sampling rates, respectively - i.e. what the daily likelihood is of an infectious individual being sampled as a case or sequence in the data. If you have provided and tree and case incidence data to the model, these must be parameterised in some way. They are naturally somewhat paired, i.e. the number of genomes is typically some smaller proportion of the number of cases. Accordingly their prior parameterisation should reflect this relationship. Alternatively, it is possible to pair them within the mode, and only specify a prior for the \phi parameter.
+
 
 \newpage
 
