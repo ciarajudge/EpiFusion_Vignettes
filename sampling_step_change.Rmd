@@ -1,0 +1,164 @@
+---
+title: 'Vignette 3: Time-variant Prior Parameterisation'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, dpi = 600, out.width = "100%")
+library(tidyverse)
+library(dplyr)
+library(ape)
+library(ggplot2)
+library(ggtree)
+library(ggpubr)
+library(EpiFusionUtilities)
+library(kableExtra)
+
+lshtm_theme <- function() {
+  theme(
+    # add border 1)
+    panel.border = element_rect(colour = "#01454f", fill = NA, linewidth = 0.5),
+    # color background 2)
+    panel.background = element_rect(fill = "white"),
+    # modify grid 3)
+    #panel.grid.major.x = element_line(colour = "steelblue", linetype = 3, size = 0.5),
+    panel.grid.minor.x = element_line(colour = "aliceblue"),
+    #panel.grid.major.y =  element_line(colour = "steelblue", linetype = 3, size = 0.5),
+    panel.grid.minor.y = element_line(colour = "aliceblue"),
+    # modify text, axis and colour 4) and 5)
+    axis.text = element_text(colour = "#01454f"),
+    axis.title = element_text(colour = "#01454f"),
+    axis.ticks = element_line(colour = "#01454f"),
+    # legend at the bottom 6)
+    #legend.position = "bottom"
+    strip.text.x = element_text(colour = "white"),
+    strip.text.y = element_text(colour = "white"),
+    strip.background = element_rect(
+      color="#01454f", fill="#01454f", linewidth = 1.5, linetype="solid"
+    ),
+    legend.position = "bottom",
+    legend.title = element_text(colour = "#01454f", face = "bold"),
+    legend.text = element_text(colour = "#01454f")
+  )
+}
+
+```
+
+## Data Preparation
+
+We can load the data for this example using the EpiFusionUtilities function `sampling_dataset()`. We will use the same index date for this analysis as other vignettes, but for this dataset the last sequence in the tree was sampled on March 17th, so we will adjust the 'last_sequence' date accordingly. As in our other examples, we prepare our tree data for EpiFusion using the `prepare_epifusion_tree` function.
+
+```{r load_data_2, eval = F}
+sampling_dataset()
+print(sampling_caseincidence[1:5,])
+print(sampling_tree)
+
+index_date <- as.Date("2023-12-26")
+last_sequence <- as.Date("2024-03-17")
+
+sampling_fixed_tree <- prepare_epifusion_tree(sampling_tree, index_date, last_sequence, "Data/Processed/sampling_fixed_tree.tree")
+```
+
+## Advanced Parameterisation: Time Variant Prior Distributions
+
+In this example we wish to parameterise the step-increase in sampling on February 5th in our model. We will do this by setting a 'time variant prior' for case sampling rate `phi` when we generate the XML file, and using the 'paired psi' feature to pair the genomic sampling rate `psi` to the case sampling rate.
+
+Previously in the EpiFusion input files, the `phi` block in the prior section consisted of the following XML code:
+
+```         
+      <phi>
+          <stepchange>false</stepchange>
+          <disttype>TruncatedNormal</disttype>
+          <mean>0.02</mean>
+          <standarddev>0.01</standarddev>
+          <lowerbound>0.0</lowerbound>
+      </phi>
+```
+
+A `phi` parameter with a step change is adjusted to look like this:
+
+```         
+      <phi>
+        <stepchange>true</stepchange>
+        <changetime>
+          <x0>
+            <disttype>FixedParameter</disttype>
+            <value>35</value>
+          </x0>
+        </changetime>
+        <distribs>
+          <x0>
+            <disttype>TruncatedNormal</disttype>
+            <mean>0.002</mean>
+            <standarddev>0.0001</standarddev>
+            <lowerbound>0.0</lowerbound>
+          </x0>
+          <x1>
+            <disttype>TruncatedNormal</disttype>
+            <mean>0.025</mean>
+            <standarddev>0.005</standarddev>
+            <lowerbound>0.0</lowerbound>
+          </x1>
+        </distribs>
+      </phi>
+```
+
+The key differences here include the setting of the `stepchange` parameter to `true`, and the introduction of two new sub-nodes, `changetimes` and `distribs`, that contain the prior distribution details for the times of the rate changes in days from the index date (`changetimes`), and the rates themselves (`distribs`). For a rate with $n$ change points, there must be $n + 1$ distributions in `distribs` and $n$ distributions in `changetimes`. These distributions are provided in tags with the format `xn`. While these adjustments can be made manually, it is also possible to parameterise this through the `priors` argument of `generate_epifusion_xml` using nested lists.
+
+First we will make a list of the phi `changetimes` (in this example there is only one). In this scenario we 'know' the date of the step change in sampling - February 5th, 41 days after our index date - so we will provide it as a fixed parameter. However it is feasible to infer this change, if desired, by providing any discrete non-fixed prior distribution for this parameter.
+
+```{r phi_changetimes}
+phi_changetimes <- list(x0 = list(disttype = "FixedParameter",
+                                  value = 41))
+```
+
+Next we will provide prior distributions for `phi` before and after the provided change time in the `distribs`.
+
+```{r phi_distribs}
+phi_distribs <- list(x0 = list(disttype = "TruncatedNormal",
+                               mean = 0.005,
+                               standarddev = 0.002,
+                               lowerbound = 0.0),
+                     x1 = list(disttype = "TruncatedNormal",
+                               mean = 0.05,
+                               standarddev = 0.02,
+                               lowerbound = 0.0))
+```
+
+The list structure we introduce below using the `changetimes` and `distribs` we have created mirrors the structure of the XML chunk.
+
+```{r phi}
+phi_prior <- list(stepchange = "true",
+            changetime = phi_changetimes,
+            distribs = phi_distribs)
+```
+
+We can then feed this to the priors argument when we generate the XML file. We also will set `pairedPsi` to `true` in the parameters, and provide an empty `pairedPsi` in the priors. This specifies that `psi` is not to be fit by MCMC, and the genomic sampling rate `psi` is calculated as a proportion of the case sampling rate using the proportion of genomic sequences to cases in the data. Further information on this process is available in the Supplementary Information.
+
+```{r generate_sampling_xml, eval = F}
+generate_epifusion_XML(tree = "Data/Processed/sampling_fixed_tree.tree",
+                       case_incidence = sampling_caseincidence,
+                       index_date = index_date,
+                       loggers = list(fileBase = "Results/sampling_step_change", logEvery = 5),
+                       parameters = list(pairedPsi = "true",
+                                         numSteps = 10000),
+                       priors = list(phi = phi_prior,
+                                     pairedPsi = ""),
+                       xml_filepath = "Data/EpiFusion_XMLs/sampling_fixed_tree_inputfile.xml")
+
+run_epifusion("Data/EpiFusion_XMLs/sampling_fixed_tree_inputfile.xml")
+```
+
+Pairing `psi` with `phi` in this way is optional; here we couple the rates as we know they should change at the same time. It is also possible to parameterise these separately, e.g. an increase in sequencing without a corresponding increase in case sampling.
+
+## Parsing Results
+
+To complete our analysis we will load our results using the `load_raw_epifusion` function once more, and inspect the parameter trace. Here we will suppress the automatically created plots, and specifically plot the parameter trace of interest (the time varying parameters) using the `plot_parameter_trace` function, but changing the default type from `all` to `timevar`.
+
+```{r sampling_parameter_trace, eval = T, fig.height = 2.5}
+raw_sampling <- load_raw_epifusion("Results/sampling_step_change/", suppress_plots = TRUE)
+
+plot_parameter_trace(raw_sampling, type = "timevar")
+```
+
+Here the output from `plot_parameter_trace` looks slightly different to previous versions (e.g. Figure 4). The function automatically recognises the presence of parameters that vary over time, and plots their piecewise constant values (y-axis) across time (x-axis) in step graphs. This allows the inferred value over time to be intuitively understood from the plot. The lines are coloured by their sample index on a continuous gradient, making visible the values to which the each chain has converged (light blue). Here we see that despite each chain initiating at different values, the initial and final sampling rates across each chain converge to approximately the same values. This is shown by the light blue (later MCMC samples) lines occurring at the same y-axis value in each chain trace plot for the `phi` parameter.

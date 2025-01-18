@@ -1,0 +1,207 @@
+---
+title: 'Vignette 1: Full Framework Workflow'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, dpi = 600, out.width = "100%")
+library(tidyverse)
+library(dplyr)
+library(ape)
+library(ggplot2)
+library(ggtree)
+library(ggpubr)
+library(EpiFusionUtilities)
+library(kableExtra)
+
+lshtm_theme <- function() {
+  theme(
+    # add border 1)
+    panel.border = element_rect(colour = "#01454f", fill = NA, linewidth = 0.5),
+    # color background 2)
+    panel.background = element_rect(fill = "white"),
+    # modify grid 3)
+    #panel.grid.major.x = element_line(colour = "steelblue", linetype = 3, size = 0.5),
+    panel.grid.minor.x = element_line(colour = "aliceblue"),
+    #panel.grid.major.y =  element_line(colour = "steelblue", linetype = 3, size = 0.5),
+    panel.grid.minor.y = element_line(colour = "aliceblue"),
+    # modify text, axis and colour 4) and 5)
+    axis.text = element_text(colour = "#01454f"),
+    axis.title = element_text(colour = "#01454f"),
+    axis.ticks = element_line(colour = "#01454f"),
+    # legend at the bottom 6)
+    #legend.position = "bottom"
+    strip.text.x = element_text(colour = "white"),
+    strip.text.y = element_text(colour = "white"),
+    strip.background = element_rect(
+      color="#01454f", fill="#01454f", linewidth = 1.5, linetype="solid"
+    ),
+    legend.position = "bottom",
+    legend.title = element_text(colour = "#01454f", face = "bold"),
+    legend.text = element_text(colour = "#01454f")
+  )
+}
+
+```
+
+In this example, we will use the baseline dataset to show a full workflow using the EpiFusion Framework: (i) data preparation (ii) prior and parameter specification (iii) running EpiFusion (iv) parsing and plotting output.
+
+## Data Preparation
+
+First we load and inspect the data for this example using the `EpiFusionUtilities` function `baseline_dataset()`. This function loads a data frame with weekly case incidence (formatted with two columns, `Cases` and `Date`, where `Cases` = the number of epidemiological cases reported on the corresponding `Date`), a time-scaled phylogenetic tree, and samples from a tree posterior (with 50% burn-in removed) from a BEAST analysis which we will use in a later section (Phylogenetic Uncertainty).
+
+```{r load_data}
+baseline_dataset()
+
+print(baseline_caseincidence[1:5,])
+
+print(baseline_tree)
+
+print(baseline_treeposterior)
+```
+
+Next we set two date objects: the 'index date', or the earliest date from which we will model the outbreak origin date, and the date of sampling of the last observed sequence from the dataset. Whilst for this example we know (through the simulation process) that the outbreak origin was the 1st of January 2024, it is good practice to set the index date to some time before the date that we suspect the outbreak began in the location represented by our case and phylogenetic data, to ensure the outbreak dynamics of are fully captured.
+
+```{r set_index_date}
+index_date <- as.Date("2023-12-26")
+last_sequence <- as.Date("2024-03-10")
+```
+
+To prepare the tree objects for EpiFusion we can use the `prepare_epifusion_tree` function from `EpiFusionUtilities`. This function processes the tree(s) for input to EpiFusion and writes them to the provided file path. In the case where a single summary tree is provided to this function it also returns the processed tree as an R phylo object, which here we reassign to the variable `fixed_tree`.
+
+```{r prep_data}
+fixed_tree <- prepare_epifusion_tree(baseline_tree, index_date, last_sequence, "Data/Processed/baseline_fixed_tree.tree")
+```
+
+## Definition of parameters
+
+We will create an EpiFusion XML file using the `generate_epifusion_xml` function from `EpiFusionUtilities`. This function populates an XML template with our data and creates a new file. It is often necessary to adjust some other parameters from their default values in this template. This can be achieved by providing additional arguments to the `generate_epifusion_xml` function, which we demonstrate below.
+
+We will generate an EpiFusion XML using the summary tree we prepared with the `prepare_epifusion_tree` function and our loaded case incidence data. First we will make lists of the various parts of the XML file we wish to override from the default. For example, the below code represents the `loggers` chunk in the default XML that details how often we sample from the MCMC (every 10 MCMC steps):
+
+```         
+  <loggers>
+    <fileBase>FILESTEM</fileBase>
+    <logEvery>10</logEvery>
+  </loggers>
+```
+
+To override this, we will make a list in R that we will later pass to the `loggers` argument of the `generate_epifusion_xml` function to specify our output folder filepath as `Results/fixed_tree` and sample from the MCMC chain every 10 steps. We will also make a `parameters` list to adjust the number of MCMC steps, thus run each chain for longer to ensure we get a satisfactory number of samples from the posterior. We will reduce the number of particles in the particle filter to 100, as this is sufficient for a short, simple analysis, and will slightly reduce runtime.
+
+```{r assign_loggers}
+loggers <- list(fileBase = "Results/baseline_fixed_tree", logEvery = 10)
+parameters <- list(numSteps = 10000,
+                   numParticles = 100)
+```
+
+We will also slightly adjust the prior for `initialBeta`, or $\beta_0$ (infectivity at the beginning of the time series) from the default settings. As the default prior for $\gamma$ is a truncated normal distribution with mean $0.15$, standard deviation $0.05$ and lower bound $0.0$, by setting the initial $\beta$ value as $0.1 < \beta < 0.5$ we indicate that the initial $R_t$ is approximately between $0.66$ and $3.33$ ($R_t = \beta/\gamma$, i.e. $0.1/0.15 = 0.66$ and $0.5/0.15 = 3.33$).
+
+```{r specify_priors}
+priors <- list(initialBeta = list(stepchange = "false",
+                            disttype = "Uniform",
+                            min = 0.1,
+                            max = 0.5))
+```
+
+In this example we are happy with the other parameters in the default XML, so we can generate the XML file `Data/EpiFusion_XMLs/fixed_tree_inputfile.xml` with the following code:
+
+```{r generate_epifusion_xml_fixed_tree}
+generate_epifusion_XML(tree = "Data/Processed/baseline_fixed_tree.tree",
+                       case_incidence = baseline_caseincidence,
+                       index_date = index_date,
+                       loggers = loggers,
+                       priors = priors,
+                       parameters = parameters,
+                       xml_filepath = "Data/EpiFusion_XMLs/baseline_fixed_tree_inputfile.xml")
+```
+
+## Running EpiFusion
+
+To run EpiFusion for the fixed tree example, we will use the `run_epifusion` function from `EpiFusionUtilities` to run the program within our R session:
+
+```{r run_epifusion, eval = F}
+# Note to users - it might be better to copy and paste this into the R console rather than run in a chunk, as it prints out a lot
+run_epifusion("Data/EpiFusion_XMLs/baseline_fixed_tree_inputfile.xml")
+```
+
+On conclusion of its analysis, EpiFusion saves a `timings.txt` file to the output folder with the total runtime in nanoseconds, which we examine and convert to minutes below:
+
+```{r check_timings}
+runtime <- suppressWarnings(read.table("Results/baseline_fixed_tree/timings.txt")[1,1]) / 6e10
+paste0("Runtime: ",runtime," minutes")
+```
+
+## Parsing and plotting the output
+
+First we will use the `load_raw_epifusion` function to import the full raw results. This function automatically produces plots (*Figure 4*) of the likelihood and parameter traces using the `plot_likelihood_trace` and `plot_parameter_trace` functions (these plots can be suppressed by passing the argument `suppress = TRUE` to the function). This allows us to check for convergence and help to identify what proportion of each chain to discard as burn-in.
+
+```{r parse_output_examine_trace, fig.height = 3.5}
+raw_output_fixed <- load_raw_epifusion("Results/baseline_fixed_tree/")
+```
+
+Next we can discard the burn-in from each MCMC chain and combine all chains into a combined posterior using the `extract_posterior_epifusion` function which takes a raw EpiFusion object and the proportion of each chain to discard as burn-in as its arguments. By default, the function returns means and Highest Posterior Density (HPD) intervals for the trajectories and parameters fitted by EpiFusion, however by specifying `include_samples = TRUE` we also instruct the function to return the actual posterior samples (minus burn-in) for inspection. This greatly increases the memory used by the posterior output object in your R environment, so is recommended for initial inspection of your results but not for downstream tasks such as loading posteriors from many analyses for plotting.
+
+```{r extract_posteriors}
+parsed_output_fixed <- extract_posterior_epifusion(raw_output_fixed, 0.2, include_samples = TRUE)
+str(parsed_output_fixed, max.level = 2)
+```
+
+The extracted posterior object from the `extract_posterior_epifusion` function contains mean and HPD intervals of increasing width for infection, $R_t$, cumulative infection and fitted epidemiological case trajectories. The `trajectory_table` function can parse these into a convenient table structured to be suitable for plotting with `ggplot2`. This table is structured with a `Time` column for each day in the analysis, and `Mean` and upper and lower HPD interval (0.95, 0.88 and 0.66) columns for each trajectory type (infection, $R_t$, cumulative infections).
+
+```{r get_trajectories_table}
+traj_table <- trajectory_table(parsed_output_fixed, index_date)
+colnames(traj_table)
+#Show the first 5 columns and 3 rows of the traj_table
+knitr::kable(head(traj_table[,1:5], n = 3))
+```
+
+It is possible use this table with ggplot functions to plot and inspect the inferred trajectories. However we also provide a function, `plot_trajectories` that takes the trajectory table as input and automatically plots all three trajectory types (*Figure 5*).
+
+```{r plot_baseline_trajectories, fig.height = 6.5}
+plot_trajectories(traj_table)
+```
+
+The `plot_trajectories` function also takes additional arguments to allow more customisation. For example, it is possible to provide a specific trajectory type to plot using the `type` argument, and specify bespoke plot colours using the `plot_colours` argument. Here we will plot only the $R_t$ trajectories in a specified colour (pink) (*Figure 6*).
+
+```{r plot_baseline_Rt_trajectories, fig.height = 3}
+plot_trajectories(traj_table, type = "rt", plot_colours = "pink")
+```
+
+As this was a combined analysis that has used case incidence data, it is possible to examine the fit of the case incidence simulated within the model to the provided data. We already have the case incidence data loaded from the data preparation stage, so we can add the mean and HPD intervals of the fit to the existing table (*Figure 7*).
+
+```{r plot_epi_data_fit, fig.height = 3.5}
+epi_data_and_fit_table <- baseline_caseincidence %>%
+  mutate(Stat = "Observed Cases") %>%
+  full_join(data.frame(Date = baseline_caseincidence$Date,
+                       Stat = "Fitted Cases",
+                   Cases = parsed_output_fixed$fitted_epi_cases$median_fitted_epi_cases,
+                   Lower95_Cases = parsed_output_fixed$fitted_epi_cases$fitted_epi_cases_hpdintervals$HPD0.95$Lower,
+                   Upper95_Cases = parsed_output_fixed$fitted_epi_cases$fitted_epi_cases_hpdintervals$HPD0.95$Upper
+         )) %>%
+  mutate(Stat = factor(Stat, levels = c("Observed Cases", "Fitted Cases")))
+
+
+ggplot(epi_data_and_fit_table, aes(x = Date)) +
+  geom_bar(aes(y = Cases, fill = Stat), stat = "identity", position = "dodge", col = NA, alpha = 0.7) +
+  scale_fill_manual(name = "", values = c("#e95b0d", "grey")) +
+  geom_errorbar(aes(ymin = Lower95_Cases, ymax = Upper95_Cases, col = Stat), position = "dodge", show.legend = F) +
+  scale_color_manual(values = c(NA, "black")) +
+  lshtm_theme()
+```
+
+Finally we can examine the posteriors of the MCMC parameters. The posterior extraction process uses the R package `stable.GR` to perform gelman-rubin convergence tests on each parameter, and estimate the effective sample sizes of each. If the gelman-rubin statistic is less than 1.015 this indicates MCMC convergence [@gelman1992]. If the MCMC has not converged it may be necessary to run each chain for longer.
+
+```{r examine_gamma_convergence}
+print(parsed_output_fixed$parameters$gamma$rhat)
+print(parsed_output_fixed$parameters$gamma$ess)
+```
+
+We can also view the posterior density of a parameter by plotting the samples from the MCMC, which we can access from the posterior object due to setting `include_samples = TRUE` when we extracted the posterior earlier using `extract_epifusion_posterior` (*Figure 8*).
+
+```{r plot_gamma, fig.height = 3.5}
+ggplot(data = data.frame(Gamma = parsed_output_fixed$parameters$gamma$samples), aes(x = Gamma)) +
+  geom_density(fill = "#01454f", alpha = 0.3) +
+  lshtm_theme()
+
+```
+

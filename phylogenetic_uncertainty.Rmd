@@ -1,0 +1,155 @@
+---
+title: 'Vignette 2: Phylogenetic Uncertainty'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, dpi = 600, out.width = "100%")
+library(tidyverse)
+library(dplyr)
+library(ape)
+library(ggplot2)
+library(ggtree)
+library(ggpubr)
+library(EpiFusionUtilities)
+library(kableExtra)
+
+lshtm_theme <- function() {
+  theme(
+    # add border 1)
+    panel.border = element_rect(colour = "#01454f", fill = NA, linewidth = 0.5),
+    # color background 2)
+    panel.background = element_rect(fill = "white"),
+    # modify grid 3)
+    #panel.grid.major.x = element_line(colour = "steelblue", linetype = 3, size = 0.5),
+    panel.grid.minor.x = element_line(colour = "aliceblue"),
+    #panel.grid.major.y =  element_line(colour = "steelblue", linetype = 3, size = 0.5),
+    panel.grid.minor.y = element_line(colour = "aliceblue"),
+    # modify text, axis and colour 4) and 5)
+    axis.text = element_text(colour = "#01454f"),
+    axis.title = element_text(colour = "#01454f"),
+    axis.ticks = element_line(colour = "#01454f"),
+    # legend at the bottom 6)
+    #legend.position = "bottom"
+    strip.text.x = element_text(colour = "white"),
+    strip.text.y = element_text(colour = "white"),
+    strip.background = element_rect(
+      color="#01454f", fill="#01454f", linewidth = 1.5, linetype="solid"
+    ),
+    legend.position = "bottom",
+    legend.title = element_text(colour = "#01454f", face = "bold"),
+    legend.text = element_text(colour = "#01454f")
+  )
+}
+
+```
+
+
+## Data Preparation
+
+First we load and inspect the data for this example using the `EpiFusionUtilities` function `baseline_dataset()`. This function loads a data frame with weekly case incidence (formatted with two columns, `Cases` and `Date`, where `Cases` = the number of epidemiological cases reported on the corresponding `Date`), a time-scaled phylogenetic tree, and samples from a tree posterior (with 50% burn-in removed) from a BEAST analysis.
+
+```{r load_data}
+baseline_dataset()
+
+print(baseline_caseincidence[1:5,])
+
+print(baseline_tree)
+
+print(baseline_treeposterior)
+```
+
+Next we set two date objects: the 'index date', or the earliest date from which we will model the outbreak origin date, and the date of sampling of the last observed sequence from the dataset. Whilst for this example we know (through the simulation process) that the outbreak origin was the 1st of January 2024, it is good practice to set the index date to some time before the date that we suspect the outbreak began in the location represented by our case and phylogenetic data, to ensure the outbreak dynamics of are fully captured.
+
+```{r set_index_date}
+index_date <- as.Date("2023-12-26")
+last_sequence <- as.Date("2024-03-10")
+```
+
+To prepare the tree posterior we use the `prepare_epifusion_tree` function. This function will recognise that a tree posterior has been passed, and will write the processed trees to a file without returning anything to your R session.
+
+```{r treeposterior}
+prepare_epifusion_tree(baseline_treeposterior, index_date, last_sequence, "Data/Processed/baseline_processed_tree_posterior.tree")
+```
+
+Next we will generate the XML file for the analysis using the tree posterior. We specify adjustments to the loggers chunk, specifying our desired output folder name and how often to sample from the MCMC and print to console. We will also increase the number of MCMC chains to 50, which, in conjunction with passing a tree posterior to EpiFusion, will instruct the model to run 50 chains, each using a different tree sampled at random from the tree posterior. This analysis will therefore take longer.
+
+```{r new_loggers_and_analysis}
+loggers <- list(fileBase = "Results/baseline_tree_posterior", logEvery = 5)
+parameters <- list(numChains = 50)
+```
+
+Similarly to the fixed tree example, we will adjust some of the default priors. As before, we will set the initial infectivity $\beta_0$ to between $0.1$ and $0.5$. We will also narrow slightly narrow some priors using their inferred values as estimated from our previous example on the same dataset, in order to help the efficiency of the MCMC sampling process due to the extra number of chains we are running.
+
+```{r new_priors}
+priors <- list(initialBeta = list(stepchange = "false",
+                                  disttype = "Uniform",
+                                  min = 0.1, 
+                                  max = 0.5),
+               betaJitter = list(stepchange = "false",
+                                  disttype = "Uniform",
+                                  min = 0.005, 
+                                  max = 0.05),
+               phi = list(stepchange = "false",
+                                  disttype = "TruncatedNormal",
+                                  lowerbound = 0.0, 
+                                  mean = 0.02,
+                                  standarddev = 0.005))
+```
+
+Finally we generate an XML file using these parameters and priors for input into EpiFusion.
+
+```{r generate_xml_fixed_phylo_uncertainty}
+generate_epifusion_XML(tree = "Data/Processed/baseline_processed_tree_posterior.tree",
+                       case_incidence = baseline_caseincidence,
+                       index_date = index_date,
+                       loggers = loggers,
+                       parameters = parameters,
+                       priors = priors,
+                       xml_filepath = "Data/EpiFusion_XMLs/tree_posterior_inputfile.xml")
+```
+
+## Running EpiFusion
+``` {r run_epifusion}
+run_epifusion("Data/EpiFusion_XMLs/tree_posterior_inputfile.xml")
+```
+
+## Inspecting each chain
+
+To examine the results of the model using the tree posterior we will load the raw results with `load_raw_epifusion`. This time we will set `suppress_plots` to `true`.
+
+```{r load_raw_phylouncertainty}
+raw_phylouncertainty <- load_raw_epifusion("Results/baseline_tree_posterior/", suppress_plots = TRUE)
+```
+
+To examine the effect the inclusion of the tree posterior has on the analysis, we can use another EpiFusionUtilities function `plot_chainwise_trajectories`. This function operates similarly to the `plot_trajectories` function, but separates the trajectories by chain for inspection, while discarding a proportion of the trajectories of each chain for burn-in. This allows us to see how the sampled tree, which differs between each chain, affects the inferred trajectories. Here we can see that most of the chains converge on a similar set of trajectories to our fixed tree analysis, but some chains (and thus, some sampled trees) suggest other trajectory possibilities.
+
+```{r plot_chainwise, eval = T, fig.height = 6.5}
+plot_chainwise_trajectories(raw_phylouncertainty, 0.2)
+```
+
+In this plot we see a further capability of the `plot_chainwise_trajectories` function. MCMC chains that have become 'stuck' i.e. enter a state space where they do not accept any further MCMC steps and have an acceptance rate of 0% are plotted with dotted lines, to enable users to identify and discard them when extracting the posterior using the `discard_chains` argument of the `extract_posterior_epifusion` function.
+
+When we extract the posterior from our raw output object, the chains will be combined and this uncertainty will be represented in our posterior estimates. To further understand this uncertainty we will extract the posterior sample using the `extract_posterior_epifusion` function and again create a trajectory table using the `trajectory_table` function. Using this table, and our trajectory table from the fixed tree analysis, we can use ggplot2 to plot the trajectories from both analyses to demonstrate the effect of the phylogenetic uncertainty on the estimates. The tree posterior approach is characterised by a widening of the HPD intervals around the mean fitted infection trajectory, due to the phylogenetic uncertainty.
+
+```{r extract_posterior_uncertainty}
+posterior_phylouncertainty <- extract_posterior_epifusion(raw_phylouncertainty, 0.3, discard_chains = c(1, 34, 50))
+phylouncertainty_trajtable <- trajectory_table(posterior_phylouncertainty, as.Date("2023-12-15")) %>%
+  mutate(Approach = "Tree Posterior")
+
+combined_trajtable <- traj_table %>%
+  mutate(Approach = "Fixed Tree") %>%
+  rbind(phylouncertainty_trajtable)
+
+ggplot(combined_trajtable, aes(x = Time, col = Approach, fill = Approach)) +
+  geom_line(aes(y = Mean_Infected)) +
+  geom_ribbon(aes(ymin = Lower95_Infected, ymax = Upper95_Infected), col = NA, alpha = 0.2) +
+  geom_ribbon(aes(ymin = Lower88_Infected, ymax = Upper88_Infected), col = NA, alpha = 0.2) +
+  geom_ribbon(aes(ymin = Lower66_Infected, ymax = Upper66_Infected), col = NA, alpha = 0.2) +
+  lshtm_theme() +
+  labs(y = "Individuals Infected") +
+  facet_wrap(~Approach, ncol = 1)
+  
+```
+
+This approach to combining chains sampled under different phylogenetic trees to form unified posteriors should be carefully employed. For the purposes of demonstration here we sample 50 trees in unique chains, however to adequately approximate the full tree posterior it is advised to conduct more samples. Further, if there is significant disparity in the inferred trajectories from different chains (i.e. under different trees), we recommend reexamining the tree posterior to check for overt phylodynamic uncertainty in your tree data and considering whether employing EpiFusion is suitable with highly uncertain phylogenies.
