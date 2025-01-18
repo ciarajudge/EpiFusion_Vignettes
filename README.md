@@ -1,6 +1,6 @@
 # EpiFusion Framework Software Vignettes
 
-This repository holds the code and data used for a series of vignettes on using the EpiFusion Analysis Framework to analyse some simulated outbreak datasets. By cloning this repository, extra manuscript assets (e.g. diagrams created outside R) are also made available to compile the manuscript (`full_manuscript.Rmd`) and supplementary information (`supplementary_info.Rmd`). Alternatively, each vignette is provided separately in Rmd files, should you wish to work through each individually.
+This repository holds the code and data used for a series of vignettes on using the EpiFusion Analysis Framework to analyse some simulated outbreak datasets. By cloning this repository, extra manuscript assets (e.g. diagrams created outside R) are also made available to compile the manuscript ([`full_manuscript.Rmd`](https://github.com/ciarajudge/EpiFusion_Vignettes/blob/main/full_manuscript.Rmd)) and supplementary information ([`supplementary_info.Rmd`](https://github.com/ciarajudge/EpiFusion_Vignettes/blob/main/supplementary_info.Rmd)). Alternatively, each vignette is provided separately in Rmd files, should you wish to work through each individually.
 
 ## Installing Java
 If you don't have Java installed on your machine, you will need to do this in order to follow the tutorials in this repository. Simply go to the [Java website](https://www.java.com/en/download/help/download_options.html) and download the appropriate release for your machine. To check the software has installed correctly, open a console window and type the command `java`. You should see something that looks like this.
@@ -41,13 +41,13 @@ In the first vignette we demonstrate a full workflow that uses EpiFusion and Epi
 * Plotting Results
 * Inspecting Parameter Posteriors and Convergence Statistics
 
-You can work through this vignette using the `full_workflow.Rmd` script.
+You can work through this vignette using the [`full_workflow.Rmd`](https://github.com/ciarajudge/EpiFusion_Vignettes/blob/main/full_workflow.Rmd) script.
 
 ## Vignette 2: Examining Phylogenetic Uncertainty
-In the second vignette we show how to utilise a tree posterior as the data input into EpiFusion to allow exploration of the effect of phylogenetic uncertainty on the results. This vignette is in the `phylogenetic_uncertainty.Rmd` script.
+In the second vignette we show how to utilise a tree posterior as the data input into EpiFusion to allow exploration of the effect of phylogenetic uncertainty on the results. This vignette is in the [`phylogenetic_uncertainty.Rmd`](https://github.com/ciarajudge/EpiFusion_Vignettes/blob/main/phylogenetic_uncertainty.Rmd) script.
 
 ## Vignette 3: Time-variant Prior Parameterisation
-In the final vignette we explain how to introduce more advanced parameterisation by setting time-variant priors to parameterise a step-change in the sampling rate over time. You can work through this vignette using the `sampling_step_change.Rmd` script.
+In the final vignette we explain how to introduce more advanced parameterisation by setting time-variant priors to parameterise a step-change in the sampling rate over time. You can work through this vignette using the [`sampling_step_change.Rmd`](https://github.com/ciarajudge/EpiFusion_Vignettes/blob/main/full_manuscript.Rmd) script.
 
 
 
